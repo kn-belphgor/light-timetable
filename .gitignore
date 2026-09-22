@@ -1,0 +1,21 @@
+# 个人课表样本：含真实姓名/学号，只在本机用于测试，绝不提交
+sample.xls
+sample.xlsx
+*.xls
+*.xlsx
+*.xlsm
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.log
+
+# 调试残留
+.edge-profile/
+.smoke/
+
+# 本项目零依赖，备而不用
+node_modules/
