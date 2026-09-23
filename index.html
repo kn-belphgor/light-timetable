@@ -184,6 +184,9 @@ header.top{position:sticky;top:0;z-index:40;background:var(--bg);border-bottom:1
 .lrow .ln{font-weight:700;font-size:14.5px}
 .lrow .lm{font-size:12.5px;color:var(--muted);margin-top:3px;display:flex;gap:10px;flex-wrap:wrap}
 .lrow .acts{display:flex;gap:4px}
+.linkbtn{color:var(--accent);font-size:12px;font-weight:600;text-decoration:underline;text-underline-offset:2px;padding:0 2px}
+.wk[data-act]{cursor:pointer}
+.wk[data-act]:active{color:var(--accent)}
 mark{background:var(--warn-soft);color:inherit;border-radius:4px;padding:0 2px}
 
 /* ---------- 设置 ---------- */
@@ -415,7 +418,8 @@ var DEFAULT_PERIODS = [
 
 function defaultState(){
   return {
-    settings:{ termStart: dstr(mondayOf(new Date())), totalWeeks: 20, showWeekend: true, theme: 'auto' },
+    settings:{ termStart: dstr(mondayOf(new Date())), totalWeeks: 20, showWeekend: true, theme: 'auto',
+               userSetTerm: false, termHintClosed: false },
     periods: DEFAULT_PERIODS.map(function(p){ return {s:p.s,e:p.e}; }),
     courses: []
   };
@@ -458,6 +462,8 @@ function loadState(){
         st.settings.totalWeeks = clamp(parseInt(d.settings.totalWeeks,10)||20, 1, 30);
         st.settings.showWeekend= d.settings.showWeekend !== false;
         st.settings.theme      = d.settings.theme || 'auto';
+        st.settings.userSetTerm = !!d.settings.userSetTerm;
+        st.settings.termHintClosed = !!d.settings.termHintClosed;
       }
       if(Array.isArray(d.periods) && d.periods.length){
         st.periods = d.periods.filter(function(p){ return p && p.s && p.e; }).map(function(p){ return {s:p.s,e:p.e}; });
@@ -1547,8 +1553,7 @@ function renderToday(){
   });
 
   var heroCls = cur ? 'live' : (next ? '' : 'none');
-  var html = '<div class="hero '+heroCls+'">';
-  if(cur){
+  var html = '<div class="hero '+heroCls+'">';  if(cur){
     var pct = clamp(Math.round((nowMin - cur.t.s) / Math.max(1, cur.t.e - cur.t.s) * 100), 0, 100);
     var left = cur.t.e - nowMin;
     html += '<div class="h-top"><span class="chip ok">● 正在上课</span><span class="tiny muted">'+esc(colorNameTag(cur.c))+'</span></div>'+
@@ -1572,9 +1577,20 @@ function renderToday(){
   }
   html += '</div>';
 
+  /* 还没校准过学期时间 → 提示一次（周次不准大多是因为这个） */
+  if(!state.settings.userSetTerm && !state.settings.termHintClosed){
+    html += '<div class="note" style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'+
+      '<span style="flex:1;min-width:180px">📅 周次和每天日期按「开学第一周的周一」推算，现在按 <b>第 '+w+' 周</b> 显示'+
+      '（默认把本周当成第 1 周）。对不上就设一下开学时间，设完日期会自动跟着对齐。</span>'+
+      '<button class="btn sm primary" data-act="term">设置开学时间</button>'+
+      '<button class="btn sm ghost" data-act="termhint">知道了</button>'+
+      '</div>';
+  }
+
   /* 今日时间轴 */
   html += '<div class="day-head"><div><div class="d1">'+cnDate(now)+' '+DAYS[d-1]+'</div>'+
-          '<div class="d2">第 '+w+' 周 · 今天 '+list.length+' 节课</div></div>'+
+          '<div class="d2">第 <b>'+w+'</b> 周 · 今天 '+list.length+' 节课 · '+
+          '<button class="linkbtn" data-act="term">调整学期时间</button></div></div>'+
           '<button class="btn sm primary" data-act="add">＋ 添加课程</button></div>';
 
   if(list.length){
@@ -1692,7 +1708,7 @@ function renderWeekGrid(w){
   var html = '';
   html += '<div class="weekbar">'+
     '<button class="btn sm" data-act="week" data-delta="-1">◀ 上一周</button>'+
-    '<span class="wk">第 '+w+' 周</span>'+
+    '<span class="wk" data-act="term" title="调整学期开始时间">第 '+w+' 周</span>'+
     '<button class="btn sm" data-act="week" data-delta="1">下一周 ▶</button>'+
     (w!==currentWeek() ? '<button class="btn sm" data-act="weeknow">回到本周</button>' : '<span class="chip acc">本周</span>')+
     '<span style="flex:1"></span>'+
@@ -1786,7 +1802,7 @@ function renderDayBoard(w){
   var html = '';
   html += '<div class="weekbar">'+
     '<button class="btn sm" data-act="week" data-delta="-1">◀</button>'+
-    '<span class="wk">第 '+w+' 周</span>'+
+    '<span class="wk" data-act="term" title="调整学期开始时间">第 '+w+' 周</span>'+
     '<button class="btn sm" data-act="week" data-delta="1">▶</button>'+
     (isThisWeek ? '<span class="chip acc">本周</span>' : '<button class="btn sm" data-act="weeknow">回到本周</button>')+
     '<span style="flex:1"></span>'+ modeToggleHtml() +
@@ -1933,8 +1949,9 @@ function renderSettings(){
   var s = state.settings;
   var html = '';
   html += '<div class="sec-title"><h2>学期设置</h2></div><div class="set-card">'+
-    '<div class="field"><div><label>开学第一周的周一</label><div class="desc">用于计算「第几周」和每日日期</div></div>'+
-      '<input type="date" id="setTermStart" value="'+esc(s.termStart)+'"></div>'+
+    '<div class="field"><div><label>开学第一周的周一</label><div class="desc" id="termInfo">'+termInfoText()+'</div></div>'+
+      '<div class="row"><input type="date" id="setTermStart" value="'+esc(dstr(mondayOf(parseDate(s.termStart))))+'">'+
+      '<button class="btn sm" data-act="term">按今天校准</button></div></div>'+
     '<div class="field"><div><label>学期总周数</label><div class="desc">影响「每周/单周/双周」的显示范围</div></div>'+
       '<input type="number" id="setTotalWeeks" min="1" max="30" value="'+s.totalWeeks+'" style="width:90px"></div>'+
     '<div class="field"><div><label>显示周末</label><div class="desc">关闭后只显示周一至周五</div></div>'+
@@ -1973,7 +1990,14 @@ function renderSettings(){
   el.innerHTML = html;
 
   /* 绑定 */
-  $('#setTermStart').addEventListener('change', function(){ state.settings.termStart = this.value || state.settings.termStart; save(); renderAll(); toast('已更新开学日期'); });
+  $('#setTermStart').addEventListener('change', function(){
+    var st = mondayOf(parseDate(this.value || state.settings.termStart));
+    state.settings.termStart = dstr(st);
+    state.settings.userSetTerm = true;
+    ui.week = null;
+    save(); renderSettings(); renderAll();
+    toast('第 1 周从 '+mdText(st)+' 开始，本周是第 '+(Math.round((mondayOf(new Date()) - st)/604800000)+1)+' 周');
+  });
   $('#setTotalWeeks').addEventListener('change', function(){ state.settings.totalWeeks = clamp(parseInt(this.value,10)||20,1,30); save(); renderAll(); });
   $$('#themeSeg button').forEach(function(b){
     b.addEventListener('click', function(){ state.settings.theme = b.dataset.theme; applyTheme(); save(); renderSettings(); });
@@ -2141,6 +2165,83 @@ function openDup(course){
       save(); closeModal(); renderAll(); toast('已复制');
     }
   });
+}
+
+/* ------------------------------ 学期时间校准 ------------------------------ */
+/* 周次和每日日期都由「开学第一周的周一」推算。这里既能填日期，也能填「今天第几周」，两者联动。 */
+function openTermDialog(){
+  var now = new Date(), thisMon = mondayOf(now);
+  var curStart = mondayOf(parseDate(state.settings.termStart));
+  var curWeek = clamp(Math.round((thisMon - curStart) / 604800000) + 1, 1, 40);
+
+  var html = '<h3>设置学期时间</h3>'+
+    '<div class="sh-sub">周次和每天的日期都按这里推算，对不上就改一下。下面两项填任意一个，另一个自动跟着变。</div>'+
+    '<div class="mrow one"><div><label>今天是第几周</label>'+
+      '<div class="row"><input type="number" id="tWeek" min="1" max="40" value="'+curWeek+'" style="width:104px">'+
+      '<span class="tiny muted">今天是 '+cnDate(now)+' '+DAYS[dayIndex(now)-1]+'</span></div></div></div>'+
+    '<div class="mrow one"><div><label>开学第一周的周一</label>'+
+      '<input type="date" id="tStart" value="'+dstr(curStart)+'"></div></div>'+
+    '<div class="note" id="tPreview" style="margin-top:12px"></div>'+
+    '<div class="row" style="margin-top:10px">'+
+      '<button class="btn sm" data-act="tprev">← 提前一周</button>'+
+      '<button class="btn sm" data-act="tnext">推后一周 →</button>'+
+      '<button class="btn sm" data-act="tthis">本周就是第 1 周</button>'+
+    '</div>'+
+    '<div class="foot"><button class="btn" data-act="close">取消</button>'+
+    '<button class="btn primary" data-act="tsave">保存</button></div>';
+
+  var root = openModal(html);
+
+  function draw(){
+    var w = clamp(parseInt($('#tWeek', root).value, 10) || 1, 1, 40);
+    var raw = $('#tStart', root).value;
+    var st = mondayOf(parseDate(raw || dstr(curStart)));
+    var warn = (raw && dstr(parseDate(raw)) !== dstr(st))
+      ? '<br>⚠️ 选的不是周一，已按它所在那一周的周一 <b>'+mdText(st)+'</b> 计算' : '';
+    $('#tPreview', root).innerHTML =
+      '开学第一周：<b>'+cnDate(st)+'</b>（周一）～ '+cnDate(addDays(st,6))+'（周日）<br>'+
+      '本周 '+mdText(thisMon)+' ~ '+mdText(addDays(thisMon,6))+' 就是第 <b>'+w+'</b> 周'+warn;
+  }
+  function fromWeek(){
+    var w = clamp(parseInt($('#tWeek', root).value, 10) || 1, 1, 40);
+    $('#tStart', root).value = dstr(addDays(thisMon, -(w-1)*7));
+    draw();
+  }
+  function fromStart(){
+    var st = mondayOf(parseDate($('#tStart', root).value || dstr(curStart)));
+    $('#tWeek', root).value = clamp(Math.round((thisMon - st) / 604800000) + 1, 1, 40);
+    draw();
+  }
+  $('#tWeek', root).addEventListener('input', fromWeek);
+  $('#tStart', root).addEventListener('change', fromStart);
+  draw();
+
+  root.addEventListener('click', function(e){
+    var b = e.target.closest('[data-act]'); if(!b) return;
+    var a = b.dataset.act;
+    if(a==='close') closeModal();
+    else if(a==='tthis'){ $('#tWeek', root).value = 1; fromWeek(); }
+    else if(a==='tprev'){ $('#tWeek', root).value = clamp((parseInt($('#tWeek', root).value,10)||1) - 1, 1, 40); fromWeek(); }
+    else if(a==='tnext'){ $('#tWeek', root).value = clamp((parseInt($('#tWeek', root).value,10)||1) + 1, 1, 40); fromWeek(); }
+    else if(a==='tsave'){
+      var st = mondayOf(parseDate($('#tStart', root).value || dstr(curStart)));
+      state.settings.termStart = dstr(st);
+      state.settings.userSetTerm = true;
+      ui.week = null;
+      save(); closeModal(); renderAll();
+      toast('已设置：第 1 周从 '+mdText(st)+' 开始，本周是第 '+
+        (Math.round((thisMon - st)/604800000)+1)+' 周');
+    }
+  });
+  return root;
+}
+/* 设置页里那行说明文字 */
+function termInfoText(){
+  var thisMon = mondayOf(new Date());
+  var st = mondayOf(parseDate(state.settings.termStart));
+  var w = Math.round((thisMon - st) / 604800000) + 1;
+  return '第1周：'+mdText(st)+' ~ '+mdText(addDays(st,6))+'　·　本周是第 '+w+' 周'
+    + (state.settings.userSetTerm ? '' : '（还没设置过，按本周算的）');
 }
 
 /* ------------------------------ 导入面板 ------------------------------ */
@@ -2396,6 +2497,8 @@ document.addEventListener('click', function(e){
   }
   if(a==='gmode'){ ui.mode = (b.dataset.mode === 'day' ? 'day' : 'week'); renderGrid(); return; }
   if(a==='gday'){ ui.day = clamp(parseInt(b.dataset.day,10)||1, 1, 7); renderGrid(); return; }
+  if(a==='term'){ openTermDialog(); return; }
+  if(a==='termhint'){ state.settings.termHintClosed = true; save(); renderToday(); return; }
   if(a==='edit'){ var c1 = byId(b.dataset.id); if(c1) openEditor(c1); return; }
   if(a==='dup'){ var c2 = byId(b.dataset.id); if(c2) openDup(c2); return; }
   if(a==='del'){
@@ -2567,6 +2670,10 @@ if(qs){
   if(qd >= 1 && qd <= 7) ui.day = qd;
   var qm = qs.get('mode');
   if(qm === 'day' || qm === 'week') ui.mode = qm;
+  if(qs.get('term')){                                  /* ?term=2024-09-02 指定开学第一周的周一 */
+    var qt = parseDate(qs.get('term'));
+    if(!isNaN(qt.getTime())){ state.settings.termStart = dstr(mondayOf(qt)); state.settings.userSetTerm = true; }
+  }
   var qv = qs.get('view');
   if(qv && ['today','grid','list','settings'].indexOf(qv) >= 0) bootTab = qv;
 }

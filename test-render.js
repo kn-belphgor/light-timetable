@@ -116,7 +116,7 @@ function boot(search, width) {
     },
     doc: docEl,
     get sheet() { return memo.lastSheet; },
-    fire(el, type, ev) { (el._ls[type] || []).forEach((fn) => fn(ev || { preventDefault() {}, stopPropagation() {} })); },
+    fire(el, type, ev) { (el._ls[type] || []).forEach((fn) => fn.call(el, ev || { preventDefault() {}, stopPropagation() {} })); },
     courses() { try { return JSON.parse(memo.saved).courses; } catch (e) { return []; } },
     savedRaw() { return memo.saved || 'null'; }
   };
@@ -373,6 +373,74 @@ console.log('\n9. 手机端适配（窄屏单日时间轴）');
   ok('深链 ?mode=day 在宽屏也进单日', app.q('#v-grid')._html.includes('class="dboard"'), '');
   const g = app.q('#v-grid')._html;
   ok('单日视图课程时间换算正确', g.includes('08:00–09:40'), '');
+}
+
+/* ---------------- 10. 学期时间校准（日期 / 星期对齐） ---------------- */
+console.log('\n10. 学期时间校准（周次与日期对齐）');
+{
+  const monday = (d) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+  const dstr = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const thisMon = monday(new Date());
+
+  ok('基准：2024-09-02 是周一', new Date(2024, 8, 2).getDay() === 1, '');
+  ok('基准：算出的本周一确实是周一', thisMon.getDay() === 1, '');
+
+  const app = boot('?demo=1&view=today');
+  const t0 = app.q('#v-today')._html;
+  ok('未校准过时，今日页给出提示', t0.includes('设置开学时间') && t0.includes('默认把本周当成第 1 周'), '');
+  ok('今日页有「调整学期时间」入口', t0.includes('data-act="term"'), '');
+
+  app.click(app.doc, 'term');
+  const modal = app.q('#modal')._html;
+  ok('弹层出现且两个入口都在', modal.includes('设置学期时间') && modal.includes('id="tWeek"') && modal.includes('id="tStart"'), '');
+  ok('弹层显示今天的信息', /今天是 \d{4}年\d{1,2}月\d{1,2}日 周[一二三四五六日]/.test(modal), '');
+  ok('弹层含周次快捷按钮', modal.includes('本周就是第 1 周') && modal.includes('提前一周'), '');
+
+  /* 填「今天是第 5 周」→ 自动推出开学日期 */
+  app.q('#tWeek').value = '5';
+  app.fire(app.q('#tWeek'), 'input');
+  const expectStart = dstr(new Date(thisMon.getTime() - 28 * 86400000));
+  ok('填第 5 周自动推出开学日期（本周一 − 4 周）', app.q('#tStart').value === expectStart, app.q('#tStart').value + ' vs ' + expectStart);
+  ok('预览显示开学第一周与本周', app.q('#tPreview')._html.includes('开学第一周') && app.q('#tPreview')._html.includes('第 <b>5</b> 周'), '');
+
+  app.click(app.sheet, 'tsave');
+  const st = JSON.parse(app.savedRaw());
+  ok('保存后写入 termStart', st.settings.termStart === expectStart, st.settings.termStart);
+  ok('保存后标记为已校准', st.settings.userSetTerm === true, '');
+  ok('保存后提示条消失', !app.q('#v-today')._html.includes('默认把本周当成第 1 周'), '');
+  ok('保存后今日页显示第 5 周', /第 <b>5<\/b> 周/.test(app.q('#v-today')._html), '');
+  const cn = new Date();
+  ok('今日页日期是真实的今天', app.q('#v-today')._html.includes(cn.getFullYear() + '年' + (cn.getMonth() + 1) + '月' + cn.getDate() + '日'), '');
+
+  /* 课表表头日期跟着走 */
+  app.click(app.doc, 'tab', { tab: 'grid' });
+  const g5 = app.q('#v-grid')._html;
+  const sun = new Date(thisMon.getTime() + 6 * 86400000);
+  ok('课表表头周一日期 = 本周一', g5.includes('>' + (thisMon.getMonth() + 1) + '/' + thisMon.getDate() + '<'), '');
+  ok('课表表头周日日期 = 本周日', g5.includes('>' + (sun.getMonth() + 1) + '/' + sun.getDate() + '<'), '');
+  ok('课表里周次可点击校准', g5.includes('data-act="term"'), '');
+}
+{
+  const app = boot('?demo=1&view=grid&mode=week&term=2024-09-02&week=1', 1280);
+  const g1 = app.q('#v-grid')._html;
+  ok('?term=2024-09-02 第 1 周 周一 = 9/2', g1.includes('>9/2<'), '');
+  ok('?term=2024-09-02 第 1 周 周日 = 9/8', g1.includes('>9/8<'), '');
+  ok('第 1 周包含周一第 1-2 节的课', g1.includes('高等数学 A'), '');
+  const g2 = boot('?demo=1&view=grid&mode=week&term=2024-09-02&week=2', 1280).q('#v-grid')._html;
+  ok('第 2 周整体后移 7 天（周一 = 9/9）', g2.includes('>9/9<'), '');
+  ok('第 2 周 周日 = 9/15', g2.includes('>9/15<'), '');
+  const g3 = boot('?demo=1&view=grid&mode=week&term=2024-09-05&week=1', 1280).q('#v-grid')._html;
+  ok('开学日期填非周一(9/5)时自动按所在周周一(9/2)算', g3.includes('>9/2<'), '');
+}
+{
+  const app = boot('?demo=1&view=settings&term=2024-09-02');
+  const s = app.q('#v-settings')._html;
+  ok('设置页显示换算结果', s.includes('第1周：9/2 ~ 9/8'), '');
+  ok('设置页有「按今天校准」按钮', s.includes('按今天校准') && s.includes('id="setTermStart"'), '');
+  app.q('#setTermStart').value = '2025-03-03';
+  app.fire(app.q('#setTermStart'), 'change');
+  const st = JSON.parse(app.savedRaw());
+  ok('改设置页日期后写入并标记已校准', st.settings.termStart === '2025-03-03' && st.settings.userSetTerm === true, st.settings.termStart);
 }
 
 console.log('\n———————————————————————————');
